@@ -1,0 +1,144 @@
+# Native Windows build with MSYS2 UCRT64 (GNU make for MuPDF; no Visual Studio).
+# Run toolchain steps under MSYS2, and package smoke tests under PowerShell.
+
+name: Windows – native MinGW build
+
+on:
+  push:
+    tags: ['v*']
+    branches: [windows-support]
+  workflow_dispatch:
+    inputs:
+      djvu:
+        description: 'Include DjVu support'
+        type: boolean
+        default: true
+
+# Allow uploading to an existing release created by release.yml
+permissions:
+  contents: write
+
+# All development builds share a release/tag. Serialize them, including manual
+# dispatches, without cancelling a run halfway through publication.
+concurrency:
+  group: windows-mingw-${{ startsWith(github.ref, 'refs/tags/') && github.ref || 'dev' }}
+  cancel-in-progress: false
+
+env:
+  CARGO_TERM_COLOR: always
+  TARGET: x86_64-pc-windows-gnu
+  CC_x86_64_pc_windows_gnu: x86_64-w64-mingw32-gcc
+  CXX_x86_64_pc_windows_gnu: x86_64-w64-mingw32-g++
+
+jobs:
+  build-windows-gnu:
+    # `inputs` is empty on push events, and `null == false` is true in
+    # expressions, so check the event type rather than comparing to false.
+    name: Windows MinGW (${{ github.event_name == 'workflow_dispatch' && !inputs.djvu && 'no-djvu' || 'full' }})
+    runs-on: windows-latest
+    # NOTE: no job-level `defaults: run: shell` — each step picks its own shell.
+
+    steps:
+      - uses: actions/checkout@v7
+
+      # Inherit the Rust installation from the Windows PATH.
+      - name: Set up MSYS2
+        uses: msys2/setup-msys2@v2
+        with:
+          msystem: UCRT64
+          update: true
+          path-type: inherit
+          install: >-
+            base-devel
+            mingw-w64-ucrt-x86_64-toolchain
+            mingw-w64-ucrt-x86_64-clang
+
+      - name: Install Rust (stable, x86_64-pc-windows-gnu)
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ env.TARGET }}
+
+      - name: Configure and verify MuPDF tools
+        shell: msys2 {0}
+        run: |
+          # MSYS2's MinGW binutils are unprefixed. Use Windows paths so both
+          # native Cargo/cc and MuPDF's makefiles find the UCRT64 executables.
+          ar_path=$(cygpath -m /ucrt64/bin/ar.exe)
+          ranlib_path=$(cygpath -m /ucrt64/bin/ranlib.exe)
+          "$ar_path" --version
+          "$ranlib_path" --version
+          echo "AR_x86_64_pc_windows_gnu=$ar_path" >> "$GITHUB_ENV"
+          echo "AR=$ar_path" >> "$GITHUB_ENV"
+          echo "RANLIB=$ranlib_path" >> "$GITHUB_ENV"
+          echo "LIBCLANG_PATH=$(cygpath -w /ucrt64/bin)" >> "$GITHUB_ENV"
+
+      - name: Check feature configurations and run platform tests
+        shell: msys2 {0}
+        run: |
+          cargo check --locked --tests --target "$TARGET"
+          cargo check --locked --tests --target "$TARGET" --no-default-features --features pdf,svg
+          cargo check --locked --tests --target "$TARGET" --no-default-features
+          cargo test --locked --lib --target "$TARGET" inputs::terminal_input::tests
+          cargo test --locked --lib --target "$TARGET" pdf::kittyv2::kgfx::region::tests
+          cargo test --locked --lib --target "$TARGET" pdf::synctex::tests
+
+      - name: Build
+        shell: msys2 {0}
+        env:
+          WITHOUT_DJVU: ${{ github.event_name == 'workflow_dispatch' && !inputs.djvu }}
+        run: |
+          features=()
+          if [[ "$WITHOUT_DJVU" == true ]]; then
+            features=(--no-default-features --features pdf,svg)
+          fi
+          cargo build --locked --release --target "$TARGET" "${features[@]}"
+
+      # ── Package ───────────────────────────────────────────────────────────
+      - name: Determine tag name
+        id: tag
+        shell: bash
+        run: |
+          if [[ "$GITHUB_REF" == refs/tags/* ]]; then
+            echo "name=${GITHUB_REF_NAME}" >> "$GITHUB_OUTPUT"
+          else
+            echo "name=dev-$(git rev-parse --short HEAD)-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Package
+        shell: msys2 {0}
+        env:
+          BUILD_TAG: ${{ steps.tag.outputs.name }}
+        run: |
+          ARCHIVE="bookokrat-${BUILD_TAG}-${TARGET}.zip"
+          bash tools/package_windows.sh "target/${TARGET}/release/bookokrat.exe" "$ARCHIVE"
+          echo "ARCHIVE=${ARCHIVE}" >> "$GITHUB_ENV"
+
+      - name: Smoke test extracted package without MSYS2
+        shell: pwsh
+        run: |
+          $packageDir = Join-Path $env:RUNNER_TEMP "bookokrat-smoke"
+          Expand-Archive -LiteralPath $env:ARCHIVE -DestinationPath $packageDir -Force
+          $env:PATH = "$env:SystemRoot\System32;$env:SystemRoot"
+          $executable = Join-Path $packageDir "bookokrat.exe"
+          & $executable --help
+          if ($LASTEXITCODE -ne 0) { throw "Packaged --help failed: $LASTEXITCODE" }
+          & $executable --version
+          if ($LASTEXITCODE -ne 0) { throw "Packaged --version failed: $LASTEXITCODE" }
+
+      # ── Upload to GitHub Release (tag pushes only) ────────────────────────
+      - name: Upload to Release
+        if: startsWith(github.ref, 'refs/tags/')
+        uses: softprops/action-gh-release@v3
+        with:
+          fail_on_unmatched_files: true
+          files: |
+            ${{ env.ARCHIVE }}
+            ${{ env.ARCHIVE }}.sha256
+
+      # Public downloads remain available while the next build is uploaded.
+      - name: Update dev prerelease
+        if: ${{ !startsWith(github.ref, 'refs/tags/') }}
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: bash tools/publish_windows_dev.sh "$ARCHIVE"

@@ -9,10 +9,14 @@
 //! The solution: Read raw bytes from stdin, demultiplex them:
 //! - Kitty responses (starting with `\x1b_G`) go to a separate queue
 //! - Everything else gets parsed as keyboard/mouse events
+//!
+//! Windows uses Crossterm console events directly, without Kitty response demultiplexing.
 
 use std::collections::VecDeque;
 use std::io;
-use std::time::{Duration, Instant};
+use std::time::Duration;
+#[cfg(unix)]
+use std::time::Instant;
 
 use crossterm::event::{
     Event, KeyCode, KeyEvent, KeyEventKind, KeyEventState, KeyModifiers, MouseButton, MouseEvent,
@@ -152,6 +156,7 @@ impl TerminalInput {
     }
 
     /// Read available bytes from stdin with timeout.
+    #[cfg(unix)]
     fn read_stdin(&mut self, timeout: Duration) -> io::Result<()> {
         let deadline = Instant::now() + timeout;
         let now = Instant::now();
@@ -200,9 +205,23 @@ impl TerminalInput {
     }
 
     #[cfg(not(unix))]
-    fn poll_stdin(timeout: Duration) -> io::Result<bool> {
-        // On non-Unix, fall back to crossterm's poll
-        crossterm::event::poll(timeout).map_err(|e| io::Error::new(io::ErrorKind::Other, e))
+    fn read_stdin(&mut self, timeout: Duration) -> io::Result<()> {
+        self.read_console_input(timeout, crossterm::event::poll, crossterm::event::read)
+    }
+
+    // Crossterm owns the Windows console input queue. After polling, consume
+    // its parsed event rather than trying to read the same input as raw bytes.
+    #[cfg(any(not(unix), test))]
+    fn read_console_input(
+        &mut self,
+        timeout: Duration,
+        poll: impl FnOnce(Duration) -> io::Result<bool>,
+        read: impl FnOnce() -> io::Result<Event>,
+    ) -> io::Result<()> {
+        if poll(timeout)? {
+            self.event_queue.push_back(read()?);
+        }
+        Ok(())
     }
 
     /// Read from stdin without blocking.
@@ -215,11 +234,6 @@ impl TerminalInput {
         }
 
         Ok(result as usize)
-    }
-
-    #[cfg(not(unix))]
-    fn read_stdin_nonblocking(buf: &mut [u8]) -> io::Result<usize> {
-        std::io::stdin().read(buf)
     }
 
     /// Process the buffer to extract events and Kitty responses.
@@ -730,6 +744,59 @@ impl super::event_source::EventSource for UnifiedEventSource {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn console_timeout_does_not_read() {
+        let mut input = TerminalInput::new();
+        input
+            .read_console_input(
+                Duration::ZERO,
+                |timeout| {
+                    assert_eq!(timeout, Duration::ZERO);
+                    Ok(false)
+                },
+                || panic!("read must not run after a timeout"),
+            )
+            .unwrap();
+        assert!(input.event_queue.is_empty());
+    }
+
+    #[test]
+    fn console_events_are_queued_without_raw_byte_parsing() {
+        let mut input = TerminalInput::new();
+        let events = [
+            Event::Key(KeyEvent::new(KeyCode::Char('é'), KeyModifiers::NONE)),
+            Event::Resize(120, 40),
+            Event::Mouse(MouseEvent {
+                kind: MouseEventKind::ScrollDown,
+                column: 5,
+                row: 6,
+                modifiers: KeyModifiers::NONE,
+            }),
+        ];
+        for event in events.iter().cloned() {
+            input
+                .read_console_input(Duration::ZERO, |_| Ok(true), || Ok(event))
+                .unwrap();
+        }
+        assert_eq!(input.event_queue.into_iter().collect::<Vec<_>>(), events);
+        assert!(input.kitty_queue.is_empty());
+        assert!(input.buffer.is_empty());
+    }
+
+    #[test]
+    fn console_read_errors_are_propagated() {
+        let mut input = TerminalInput::new();
+        let err = input
+            .read_console_input(
+                Duration::ZERO,
+                |_| Ok(true),
+                || Err(io::Error::from(io::ErrorKind::BrokenPipe)),
+            )
+            .unwrap_err();
+        assert_eq!(err.kind(), io::ErrorKind::BrokenPipe);
+        assert!(input.event_queue.is_empty());
+    }
 
     #[test]
     fn test_kitty_response_parse() {

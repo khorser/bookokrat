@@ -72,12 +72,42 @@ xcode-select --install
 ```
 
 **Windows:**
-Install [Visual Studio Build Tools](https://visualstudio.microsoft.com/downloads/#build-tools-for-visual-studio-2022) with the \"Desktop development with C++\" workload.
+For a native build with PDF and DjVu support, install [MSYS2](https://www.msys2.org/)
+and run the following in its **UCRT64** shell (with Rust available on `PATH`):
+
+```bash
+pacman -S --needed base-devel mingw-w64-ucrt-x86_64-toolchain mingw-w64-ucrt-x86_64-clang
+rustup target add x86_64-pc-windows-gnu
+export CC_x86_64_pc_windows_gnu=x86_64-w64-mingw32-gcc
+export CXX_x86_64_pc_windows_gnu=x86_64-w64-mingw32-g++
+export AR="$(cygpath -m /ucrt64/bin/ar.exe)"
+export AR_x86_64_pc_windows_gnu="$AR"
+export RANLIB="$(cygpath -m /ucrt64/bin/ranlib.exe)"
+export LIBCLANG_PATH="$(cygpath -w /ucrt64/bin)"
+cargo build --locked --release --target x86_64-pc-windows-gnu
+```
+
+The executable is `target/x86_64-pc-windows-gnu/release/bookokrat.exe`.
+To create a ZIP containing the executable and its runtime DLLs, run the following
+in the same UCRT64 shell (requires `7z` on `PATH`):
+
+```bash
+bash tools/package_windows.sh target/x86_64-pc-windows-gnu/release/bookokrat.exe bookokrat-windows.zip
+```
+
+Extract the ZIP and run `bookokrat.exe` from PowerShell or another shell.
+
+For PDF without DjVu, add `--no-default-features --features pdf,svg` to the build
+command. For EPUB-only, add `--no-default-features`.
 
 > **Windows notes:**
-> - PDF/DJVU might not work in Windows PowerShell.
-> - For full Kitty graphics protocol support, consider using WSL with [Ghostty](https://ghostty.org/) or [Kitty](https://sw.kovidgoyal.net/kitty/).
-> - If MuPDF fails to build, disable PDF/DJVU support: `cargo install bookokrat --no-default-features`
+> - PDF and DjVu work from PowerShell when the terminal supports a compatible
+>   graphics protocol.
+> - Native Windows builds use inline image transfer because POSIX shared memory
+>   is unavailable. Kitty delete-range/relative-placement capability probes are
+>   also unavailable.
+> - SyncTeX parsing is available, but editor communication through
+>   `--synctex-forward` requires Unix sockets and is unsupported on native Windows.
 
 </details>
 

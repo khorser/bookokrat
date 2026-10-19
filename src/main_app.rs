@@ -680,7 +680,7 @@ impl App {
             book_manager.supports_graphics = startup_caps.supports_graphics;
             (book_manager, startup_caps)
         };
-        #[cfg(not(feature = "pdf"))]
+        #[cfg(all(not(feature = "pdf"), not(any(test, feature = "test-utils"))))]
         let startup_caps = {
             let mut caps = crate::terminal::detect_terminal();
             caps.pdf.supported = false;
@@ -7213,7 +7213,15 @@ impl App {
         pages
     }
 
-    #[cfg(feature = "pdf")]
+    #[cfg(all(feature = "pdf", not(feature = "djvu")))]
+    fn extract_djvu_search_pages(
+        &self,
+        _doc_path: &std::path::Path,
+    ) -> Vec<(usize, Vec<SearchLine>)> {
+        Vec::new()
+    }
+
+    #[cfg(feature = "djvu")]
     fn extract_djvu_search_pages(
         &self,
         doc_path: &std::path::Path,

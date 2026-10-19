@@ -1,0 +1,6 @@
+# Linker for `cargo build --target x86_64-pc-windows-gnu` (MSYS2 UCRT64 or a
+# MinGW-w64 cross toolchain). CARGO_TARGET_X86_64_PC_WINDOWS_GNU_LINKER
+# overrides it.
+
+[target.x86_64-pc-windows-gnu]
+linker = "x86_64-w64-mingw32-gcc"
