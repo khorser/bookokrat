@@ -127,10 +127,13 @@ tempfile = "3.8"
 serial_test = "3.2"
 
 [features]
-default = ["pdf", "svg"]
+default = ["pdf", "djvu", "svg"]
 test-utils = []
 serde = []
-pdf = ["mupdf", "flume", "wide", "lru", "rayon", "base64", "rdjvu", "notify"]
+# PDF rendering (MuPDF). Does not include DjVu; add `djvu` feature for that.
+pdf = ["mupdf", "flume", "wide", "lru", "rayon", "base64", "notify"]
+# DjVu rendering (pure-Rust `djvu` crate). Implies `pdf`.
+djvu = ["rdjvu", "pdf"]
 profile = ["dep:pprof"]
 svg = ["resvg"]
 image-bmp = ["image/bmp"]

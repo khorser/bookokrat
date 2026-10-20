@@ -7213,7 +7213,15 @@ impl App {
         pages
     }
 
-    #[cfg(feature = "pdf")]
+    #[cfg(all(feature = "pdf", not(feature = "djvu")))]
+    fn extract_djvu_search_pages(
+        &self,
+        _doc_path: &std::path::Path,
+    ) -> Vec<(usize, Vec<SearchLine>)> {
+        Vec::new()
+    }
+
+    #[cfg(feature = "djvu")]
     fn extract_djvu_search_pages(
         &self,
         doc_path: &std::path::Path,

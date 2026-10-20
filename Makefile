@@ -35,9 +35,10 @@ pre-release-check: lint svg-tests
 	@echo "════════════════════════════════════════════════════════════"
 	@echo "pre-release-check: ALL CHECKS PASSED"
 
-## Clippy with warnings denied: full and EPUB-only.
+## Clippy with warnings denied: full, PDF without DjVu, and EPUB-only.
 lint:
 	cargo clippy --locked -- -D warnings
+	cargo clippy --locked --no-default-features --features pdf,svg -- -D warnings
 	cargo clippy --locked --no-default-features -- -D warnings
 
 ## SVG snapshot tests; opens the HTML report in the browser.
