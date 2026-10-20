@@ -208,8 +208,11 @@ binding_tests! {
         setup = |app, _dir| { open_book(&mut app); },
         check = |app| {
             // Suspend is unix-only; on other platforms the dispatcher is a no-op
-            // but still consumes the key — just assert the app didn't quit.
-            if cfg!(unix) { app.pending_suspend } else { true }
+            // but still consumes the key; there is no suspend state to inspect.
+            #[cfg(unix)]
+            { app.pending_suspend }
+            #[cfg(not(unix))]
+            { true }
         };
     // Ctrl+R reloads keybindings; with no user config, reload is a no-op but the
     // action still dispatches successfully (notification fires, no popup).

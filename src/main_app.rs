@@ -7458,9 +7458,19 @@ impl App {
             Ok(scanner) => {
                 log::info!("Loaded SyncTeX data from {}", synctex_path.display());
                 let scanner = std::sync::Arc::new(scanner);
+                // Editor -> viewer forward search needs a Unix socket.
+                #[cfg(not(unix))]
+                if announce {
+                    self.show_info(
+                        "SyncTeX enabled (Ctrl+click, right-click, or gd to jump to source)",
+                    );
+                }
+                #[cfg(unix)]
                 let socket_path = crate::pdf::synctex::synctex_socket_path(doc_path);
+                #[cfg(unix)]
                 let (tx, rx) = flume::unbounded();
 
+                #[cfg(unix)]
                 match crate::pdf::synctex::SyncTexListener::start(socket_path.clone(), tx) {
                     Ok(listener) => {
                         log::info!("SyncTeX socket: {}", socket_path.display());
