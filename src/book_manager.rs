@@ -821,9 +821,14 @@ mod tests {
 
     #[test]
     fn extension_round_trips_through_detect_format() {
-        let mut formats = vec![BookFormat::Epub, BookFormat::Html];
-        #[cfg(feature = "pdf")]
-        formats.extend([BookFormat::Pdf, BookFormat::Djvu]);
+        let formats = [
+            BookFormat::Epub,
+            BookFormat::Html,
+            #[cfg(feature = "pdf")]
+            BookFormat::Pdf,
+            #[cfg(feature = "pdf")]
+            BookFormat::Djvu,
+        ];
         for format in formats {
             let name = format!("stdin.{}", format.extension());
             assert_eq!(BookManager::detect_format(&name), Some(format));
